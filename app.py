@@ -1,5 +1,5 @@
 import os, sys, json, requests, datetime, time, threading
-from flask import Flask, request
+from flask import Flask, request, jsonify
 from supabase import create_client
 from dotenv import load_dotenv
 
@@ -36,7 +36,7 @@ if missing_vars:
     BASE_URL = os.environ.get("BASE_URL", "")
     active_bots = {}
 else:
-    # ✅ All vars present — initialize normally
+    # ✅ All vars present — initialize normally with YOUR Supabase credentials
     sb = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
     PAY_KEY = os.environ.get("PAYSTACK_SECRET_KEY", "")
     BASE_URL = os.environ.get("BASE_URL", "http://localhost:5000")
@@ -312,6 +312,18 @@ else:
     @app.route('/health')
     def health(): return {"status": "ok", "active_bots": len(active_bots)}
 
+    # 🔍 DEBUG ROUTE: Check if env vars are loading correctly on Railway
+    @app.route('/debug-vars')
+    def debug_vars():
+        return {
+            "PORT": os.environ.get("PORT"),
+            "SUPABASE_URL": "✓" if os.environ.get("SUPABASE_URL") else "✗ MISSING",
+            "SUPABASE_KEY": "✓" if os.environ.get("SUPABASE_KEY") else "✗ MISSING",
+            "TELEGRAM_BOT_TOKEN": "✓" if os.environ.get("TELEGRAM_BOT_TOKEN") else "✗ MISSING",
+            "PAYSTACK_SECRET_KEY": "✓" if os.environ.get("PAYSTACK_SECRET_KEY") else "✗ MISSING",
+            "BASE_URL": os.environ.get("BASE_URL", "not set"),
+        }
+
 # ─────────────────────────────────────────────────────────────
 # STARTUP (Runs for both missing_vars and normal cases)
 # ─────────────────────────────────────────────────────────────
@@ -323,4 +335,4 @@ if __name__ == '__main__':
         load_all_bots()
         print(f"✅ {len(active_bots)} bot(s) running")
     port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)  # ✅ NO extra bracket here
+    app.run(host='0.0.0.0', port=port)  # ✅ Clean, no extra brackets
