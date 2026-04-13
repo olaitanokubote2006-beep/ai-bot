@@ -333,7 +333,5 @@ def health(): return {"status": "ok", "active_bots": len(active_bots)}
 # STARTUP
 # ─────────────────────────────────────────────────────────────
 if __name__ == '__main__':
-    print("🌐 Loading bots...")
-    load_all_bots()
-    print("✅", len(active_bots), "bot(s) running in Multilingual Voice Mode 🇳🇬🎙️")
-    app.run(host='0.0.0.0', port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
