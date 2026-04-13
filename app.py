@@ -30,6 +30,23 @@ else:
     @app.route('/health')
     def health(): return jsonify({"status": "ok", "active_bots": len(active_bots)})
 
+# ─────────────────────────────────────────────────────────────
+# STARTUP + KEEP-ALIVE (runs for both cases)
+# ─────────────────────────────────────────────────────────────
 if __name__ == '__main__':
+    if missing:
+        print(f"⚠️ Setup error: {missing} — app running in error mode")
+    else:
+        print("✅ Env vars loaded, Deboo starting...")
+        # load_all_bots()  # Uncomment when you add polling back
+    
     port = int(os.environ.get("PORT", 5000))
+    
+    # 🔁 Keep container alive with a simple background thread
+    def keep_alive():
+        while True:
+            time.sleep(60)  # Sleep 60 seconds, repeat forever
+    threading.Thread(target=keep_alive, daemon=True).start()
+    
+    # Start Flask
     app.run(host='0.0.0.0', port=port)
