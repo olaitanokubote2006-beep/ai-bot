@@ -1,10 +1,8 @@
-cat > nixpacks.toml << 'EOF'
-[phases.setup]
-nixPkgs = ["python311"]
-
-[phases.install]
-cmds = ["python -m pip install -r requirements.txt"]
-
-[start]
-cmd = "gunicorn app:app --bind 0.0.0.0:$PORT --log-file -"
-EOF
+echo '[phases.setup]' > nixpacks.toml
+echo 'nixPkgs = ["python311"]' >> nixpacks.toml
+echo '' >> nixpacks.toml
+echo '[phases.install]' >> nixpacks.toml
+echo 'cmds = ["python -m pip install -r requirements.txt"]' >> nixpacks.toml
+echo '' >> nixpacks.toml
+echo '[start]' >> nixpacks.toml
+echo 'cmd = "gunicorn app:app --bind 0.0.0.0:$PORT --log-file -"' >> nixpacks.toml
