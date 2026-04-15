@@ -21,7 +21,10 @@ else:
     from flask import request
     from dotenv import load_dotenv
     load_dotenv()
-    sb = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
+    # ⚠️ TEMPORARY DEBUG: Remove after testing!
+TEST_URL = "https://zbzeqxtthhhkktqmbxti.supabase.co"
+TEST_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." # ⬅️ PASTE YOUR FULL anon KEY HERE (no quotes around the var, but keep quotes around the string)
+sb = create_client(TEST_URL, TEST_KEY)
     PAY_KEY = os.environ.get("PAYSTACK_SECRET_KEY", "")
     BASE_URL = os.environ.get("BASE_URL", "http://localhost:5000")
     active_bots = {}
@@ -48,6 +51,6 @@ if __name__ == '__main__':
             time.sleep(60)  # Sleep 60 seconds, repeat forever
     threading.Thread(target=keep_alive, daemon=True).start()
     
-    # Start Flask
+    # Start Flask 
     app.run(host='0.0.0.0', port=port)
 # rebuild 1776124210
