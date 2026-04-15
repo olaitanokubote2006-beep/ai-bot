@@ -47,6 +47,9 @@ else:
 # ─────────────────────────────────────────────────────────────
 # STARTUP + KEEP-ALIVE (runs for BOTH cases)
 # ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# STARTUP + KEEP-ALIVE (runs for BOTH cases)
+# ─────────────────────────────────────────────────────────────
 if __name__ == '__main__':
     if missing:
         print(f"⚠️ Running in setup-error mode — add env vars in Railway: {missing}")
@@ -59,6 +62,7 @@ if __name__ == '__main__':
             time.sleep(60)
     threading.Thread(target=keep_alive, daemon=True).start()
     
-    # Start Flask
+    # Start Flask — bind to 0.0.0.0 and use Railway's PORT
     port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+    print(f"🌐 Starting Flask on port {port}...")
+    app.run(host='0.0.0.0', port=port, threaded=True)
