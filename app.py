@@ -25,13 +25,13 @@ else:
 TEST_URL = "https://zbzeqxtthhhkktqmbxti.supabase.co"
 TEST_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." # ⬅️ PASTE YOUR FULL anon KEY HERE (no quotes around the var, but keep quotes around the string)
 sb = create_client(TEST_URL, TEST_KEY)
-    PAY_KEY = os.environ.get("PAYSTACK_SECRET_KEY", "")
-    BASE_URL = os.environ.get("BASE_URL", "http://localhost:5000")
-    active_bots = {}
-    @app.route('/')
-    def home(): return "<h1>✅ Deboo is live!</h1>"
-    @app.route('/health')
-    def health(): return jsonify({"status": "ok", "active_bots": len(active_bots)})
+PAY_KEY = os.environ.get("PAYSTACK_SECRET_KEY", "")
+BASE_URL = os.environ.get("BASE_URL", "http://localhost:5000")
+active_bots = {}
+@app.route('/')
+def home(): return "<h1>✅ Deboo is live!</h1>"
+@app.route('/health')
+def health(): return jsonify({"status": "ok", "active_bots": len(active_bots)})
 
 # ─────────────────────────────────────────────────────────────
 # STARTUP + KEEP-ALIVE (runs for both cases)
