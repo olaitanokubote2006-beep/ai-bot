@@ -3,13 +3,13 @@ import os, requests, threading, time
 
 app = Flask(__name__)
 
-# ✅ ROUTES (registered first)
+# ✅ ROUTES
 @app.route('/test')
-def t(): return jsonify({"ok": True, "version": "catalog-v1"}), 200
+def t(): return jsonify({"ok": True, "version": "multilingual-v1"}), 200
 @app.route('/health')
 def h(): return jsonify({"status": "ok"}), 200
 @app.route('/')
-def home(): return "<h1>✅ Deboo Live</h1>"
+def home(): return "<h1>✅ Deboo Live (Multilingual)</h1>"
 
 # ✅ APP LOGIC
 REQUIRED = ["SUPABASE_URL", "SUPABASE_KEY", "TELEGRAM_BOT_TOKEN"]
@@ -22,9 +22,57 @@ if all(os.environ.get(v) for v in REQUIRED):
         print(f"🔴 Supabase error: {e}", flush=True)
         sb = None
 
+    # 🌍 MULTILINGUAL ENGINE (Rule-based, zero API cost)
+    def detect_lang(text):
+        t = text.lower().strip()
+        keys = {
+            'pidgin': ['wetin', 'abi', 'na', 'dey', 'how far', 'oya', 'guy', 'make i', 'no dey', 'abi you'],
+            'yoruba': ['bawo', 'e se', 'daada', 'omo', 'sugbon', 'ko si', 'wa', 'ni', 'ti wa'],
+            'igbo': ['kedu', 'daalu', 'nnoo', 'karia', 'ma', 'ga', 'na-eme', 'anyi', 'ka m'],
+            'hausa': ['sannu', 'yaya', 'kwana', 'ina', 'ka', 'ki', 'ba', 'da', 'muna']
+        }
+        scores = {lang: sum(1 for k in kw if k in t) for lang, kw in keys.items()}
+        best = max(scores, key=scores.get)
+        return best if scores[best] > 0 else 'english'
+
+    MSGS = {
+        'greeting': {
+            'english': "👋 Hello! I'm Deboo 🤖\n\nTry: *show products*, *pay*, or *track order*",
+            'pidgin': "👋 How far! I be Deboo 🤖\n\nTry: *show products*, *pay*, or *track order*",
+            'yoruba': "👋 Bawo! Mo ni Deboo 🤖\n\nTry: *show products*, *pay*, or *track order*",
+            'igbo': "👋 Kedụ! Abụ m Deboo 🤖\n\nTry: *show products*, *pay*, or *track order*",
+            'hausa': "👋 Sannu! Ni ne Deboo 🤖\n\nTry: *show products*, *pay*, or *track order*"
+        },
+        'prod_head': {
+            'english': "🛍️ *Available Products:*\n\n",
+            'pidgin': "🛍️ *Wetin we dey sell:*\n\n",
+            'yoruba': "🛍️ *Ohun ti a n ta:*\n\n",
+            'igbo': "🛍️ *Ihe anyị na-ere:*\n\n",
+            'hausa': "🛍️ *Abin da muke sayarwa:*\n\n"
+        },
+        'prod_foot': {
+            'english': "_Reply with a number to order!_",
+            'pidgin': "_Reply with number make you order!_",
+            'yoruba': "_Fi nọmba ranṣẹ lati ra!_",
+            'igbo': "_Za nọmba ka ị zụta!_",
+            'hausa': "_Amsa da lamba don sayayya!_"
+        },
+        'no_prod': {
+            'english': "📦 No products yet. Check back later!",
+            'pidgin': "📦 No product dey for now. Abeg wait!",
+            'yoruba': "📦 Ko si ohun kan lọwọlọwọ.",
+            'igbo': "📦 Ihe ọ bụla adịghị ugbu a.",
+            'hausa': "📦 Babu abu a yanzu."
+        }
+    }
+
+    def send(cid, txt, token, parse="Markdown"):
+        requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": cid, "text": txt, "parse_mode": parse}, timeout=5)
+
     def poll():
         token = os.environ["TELEGRAM_BOT_TOKEN"]
         off = 0
+        print("🌍 Multilingual poller started", flush=True)
         while True:
             try:
                 r = requests.get(f"https://api.telegram.org/bot{token}/getUpdates", params={"offset": off, "timeout": 30}, timeout=35)
@@ -34,36 +82,35 @@ if all(os.environ.get(v) for v in REQUIRED):
                         off = u["update_id"] + 1
                         if "message" in u and "text" in u["message"]:
                             cid = u["message"]["chat"]["id"]
-                            txt = u["message"]["text"].strip().lower()
-                            print(f"💬 '{txt}' from {cid}", flush=True)
+                            txt = u["message"]["text"].strip()
+                            lang = detect_lang(txt)
+                            t_lower = txt.lower()
 
-                            # 🛍️ SMART PRODUCT CATALOG
-                            if txt in ['show products', 'products', 'menu', 'catalog', 'wetin you get']:
+                            if t_lower in ['show products', 'products', 'menu', 'catalog', 'wetin you get', 'bawo ni', 'kedu ihe', 'menene']:
                                 if sb:
                                     try:
                                         res = sb.table("products").select("*").execute()
                                         items = res.data
                                         if items:
-                                            msg = "🛍️ *Available Products:*\n\n"
+                                            msg = MSGS['prod_head'][lang]
                                             for i, p in enumerate(items, 1):
                                                 price = f"₦{p['price']:,.0f}" if p.get('price') else "₦0"
                                                 msg += f"{i}️⃣ *{p['name']}* - {price}\n"
                                                 if p.get('description'): msg += f"   _{p['description']}_\n"
                                                 msg += "\n"
-                                            msg += "_Reply with a number to order!_"
+                                            msg += MSGS['prod_foot'][lang]
                                         else:
-                                            msg = "📦 No products yet. Add via Supabase!"
+                                            msg = MSGS['no_prod'][lang]
                                     except Exception as e:
                                         msg = f"⚠️ DB Error: {str(e)[:50]}"
                                 else:
-                                    msg = "🔴 Supabase not connected"
-                                requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": cid, "text": msg, "parse_mode": "Markdown"}, timeout=5)
+                                    msg = "🔴 Database not connected"
+                                send(cid, msg, token)
                             else:
-                                requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": cid, "text": f"✅ Got: {txt}"}, timeout=5)
+                                send(cid, MSGS['greeting'][lang], token)
                 time.sleep(1)
             except Exception as e:
                 print(f"❌ Poll error: {e}", flush=True)
                 time.sleep(5)
 
     threading.Thread(target=poll, daemon=True).start()
-    print("🚀 Polling active", flush=True)
