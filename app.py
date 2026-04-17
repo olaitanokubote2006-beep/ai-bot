@@ -38,15 +38,15 @@ if all(os.environ.get(v) for v in REQUIRED):
     MSGS = {
         'greeting': {
             'english': "👋 Hello! I'm Deboo 🤖\n\nTry: *show products*, *pay*, or *track order*",
-            'pidgin': "👋 How far! I be Deboo 🤖\n\nTry: *show products*, *pay*, or *track order*",
-            'yoruba': "👋 Bawo! Mo ni Deboo 🤖\n\nTry: *show products*, *pay*, or *track order*",
+            'pidgin': "👋 How far my pesin! I be Deboo 🤖\n\nTry: *show products*, *pay*, or *track order*",
+            'yoruba': "👋 Bawo! Oruko mi ni Deboo 🤖\n\nTry: *show products*, *pay*, or *track order*",
             'igbo': "👋 Kedụ! Abụ m Deboo 🤖\n\nTry: *show products*, *pay*, or *track order*",
             'hausa': "👋 Sannu! Ni ne Deboo 🤖\n\nTry: *show products*, *pay*, or *track order*"
         },
         'prod_head': {
             'english': "🛍️ *Available Products:*\n\n",
             'pidgin': "🛍️ *Wetin we dey sell:*\n\n",
-            'yoruba': "🛍️ *Ohun ti a n ta:*\n\n",
+            'yoruba': "🛍️ *Ohun ti a n ta ni:*\n\n",
             'igbo': "🛍️ *Ihe anyị na-ere:*\n\n",
             'hausa': "🛍️ *Abin da muke sayarwa:*\n\n"
         },
@@ -60,7 +60,7 @@ if all(os.environ.get(v) for v in REQUIRED):
         'no_prod': {
             'english': "📦 No products yet. Check back later!",
             'pidgin': "📦 No product dey for now. Abeg wait!",
-            'yoruba': "📦 Ko si ohun kan lọwọlọwọ.",
+            'yoruba': "📦 Ko si oja kan lọwọlọwọ.",
             'igbo': "📦 Ihe ọ bụla adịghị ugbu a.",
             'hausa': "📦 Babu abu a yanzu."
         }
