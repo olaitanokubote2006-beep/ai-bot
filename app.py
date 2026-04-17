@@ -1,52 +1,42 @@
-import os, sys, time, threading, requests
 from flask import Flask, jsonify
+import os, requests, threading, time
 
 app = Flask(__name__)
-print("🟢 DEPLOY LOADED", flush=True)
 
+# ✅ ROUTES FIRST - always registered
 @app.route('/test')
-def test_env():
-    return jsonify({
-        "SUPABASE_URL": "✓" if os.environ.get("SUPABASE_URL") else "✗",
-        "TELEGRAM_BOT_TOKEN": "✓" if os.environ.get("TELEGRAM_BOT_TOKEN") else "✗"
-    }), 200
+def t(): return jsonify({"ok": True, "version": "minimal"}), 200
 
 @app.route('/health')
-def health(): return jsonify({"status":"ok"}), 200
+def h(): return jsonify({"status": "ok"}), 200
 
 @app.route('/')
-def home(): return "<h1>✅ Deboo Running</h1>"
+def home(): return "<h1>Deboo</h1>"
 
-REQUIRED = ["SUPABASE_URL", "SUPABASE_KEY", "TELEGRAM_BOT_TOKEN"]
-missing = [v for v in REQUIRED if not os.environ.get(v)]
-
-if not missing:
+# ✅ APP LOGIC (runs after routes)
+if all([os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_KEY"), os.environ.get("TELEGRAM_BOT_TOKEN")]):
     try:
         from supabase import create_client
         sb = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
-        print("✅ Supabase connected", flush=True)
-    except Exception as e:
-        print(f"🔴 Supabase: {e}", flush=True)
-
-    def poller():
+        print("✅ Supabase OK", flush=True)
+    except: pass
+    
+    def poll():
         token = os.environ["TELEGRAM_BOT_TOKEN"]
-        print("🚀 Poller started", flush=True)
-        offset = 0
+        off = 0
         while True:
             try:
-                r = requests.get(f"https://api.telegram.org/bot{token}/getUpdates", 
-                                params={"offset": offset, "timeout": 30}, timeout=35)
-                data = r.json()
-                if data.get("ok"):
-                    for u in data.get("result", []):
-                        offset = u["update_id"] + 1
+                r = requests.get(f"https://api.telegram.org/bot{token}/getUpdates", params={"offset": off, "timeout": 30}, timeout=35)
+                d = r.json()
+                if d.get("ok"):
+                    for u in d.get("result", []):
+                        off = u["update_id"] + 1
                         if "message" in u and "text" in u["message"]:
                             cid = u["message"]["chat"]["id"]
                             txt = u["message"]["text"]
-                            print(f"💬 '{txt}' from {cid}", flush=True)
-                            requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
-                                         json={"chat_id": cid, "text": f"✅ Got: {txt}"}, timeout=5)
+                            requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": cid, "text": f"✅ {txt}"}, timeout=5)
                 time.sleep(1)
             except: time.sleep(5)
     
-    threading.Thread(target=poller, daemon=True).start()
+    threading.Thread(target=poll, daemon=True).start()
+    print("🚀 Polling active", flush=True)
