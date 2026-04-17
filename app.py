@@ -10,11 +10,22 @@ REQUIRED = ["SUPABASE_URL", "SUPABASE_KEY", "TELEGRAM_BOT_TOKEN"]
 missing = [v for v in REQUIRED if not os.environ.get(v)]
 print(f"🟢 Missing: {missing if missing else 'NONE - All present!'}", flush=True)
 
-if missing:
-    @app.route('/health')
-    def h(): return jsonify({"status":"error","missing":missing}), 200
-    @app.route('/')
-    def home(): return "<h1>⚠️ Add env vars in Railway</h1>", 503
+    @app.route('/status')
+    def check_status():
+        import requests as rq
+        token = os.environ.get("TELEGRAM_BOT_TOKEN", "MISSING")
+        try:
+            res = rq.get(f"https://api.telegram.org/bot{token}/getMe", timeout=5)
+            bot_info = res.json().get("result", {})
+            return {
+                "env_supabase": "✓" if os.environ.get("SUPABASE_URL") else "✗",
+                "env_telegram": "✓" if token != "MISSING" else "✗",
+                "bot_username": bot_info.get("username"),
+                "webhook_info": "Check via @BotFather or /deleteWebhook",
+                "status": "active"
+            }
+        except Exception as e:
+            return {"error": str(e)}
 else:
     print("🟢 Env vars found. Importing supabase...", flush=True)
     try:
