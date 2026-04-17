@@ -1,51 +1,77 @@
-import os, sys, time, threading
-# 🔥 Force immediate output so Railway shows logs
-print("🟢 APP STARTING - Flushing logs...", flush=True)
-
+import os, sys, time, threading, requests
 from flask import Flask, jsonify
+
 app = Flask(__name__)
 
-print("🟢 Checking env vars...", flush=True)
+print("🟢 APP STARTING...", flush=True)
+
 REQUIRED = ["SUPABASE_URL", "SUPABASE_KEY", "TELEGRAM_BOT_TOKEN"]
 missing = [v for v in REQUIRED if not os.environ.get(v)]
-print(f"🟢 Missing: {missing if missing else 'NONE - All present!'}", flush=True)
 
-    @app.route('/status')
-    def check_status():
-        import requests as rq
-        token = os.environ.get("TELEGRAM_BOT_TOKEN", "MISSING")
+if missing:
+    print(f"⚠️ Missing vars: {missing}", flush=True)
+    @app.route('/health')
+    def health(): return jsonify({"status": "missing", "vars": missing}), 200
+else:
+    print("✅ All vars present", flush=True)
+    try:
+        from supabase import create_client
+        sb = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
+        print("✅ Supabase connected", flush=True)
+    except Exception as e:
+        print(f"🔴 Supabase error: {e}", flush=True)
+
+    @app.route('/health')
+    def health(): return jsonify({"status": "ok"}), 200
+
+    # 🧪 MANUAL TEST: See if Telegram is actually sending updates to this token
+    @app.route('/test-poll')
+    def test_poll():
+        token = os.environ["TELEGRAM_BOT_TOKEN"]
         try:
-            res = rq.get(f"https://api.telegram.org/bot{token}/getMe", timeout=5)
-            bot_info = res.json().get("result", {})
-            return {
-                "env_supabase": "✓" if os.environ.get("SUPABASE_URL") else "✗",
-                "env_telegram": "✓" if token != "MISSING" else "✗",
-                "bot_username": bot_info.get("username"),
-                "webhook_info": "Check via @BotFather or /deleteWebhook",
-                "status": "active"
-            }
+            r = requests.get(f"https://api.telegram.org/bot{token}/getUpdates", timeout=10)
+            return r.json()
         except Exception as e:
             return {"error": str(e)}
-else:
-    print("🟢 Env vars found. Importing supabase...", flush=True)
-    try:
-        from supabase import create_client, Client
-        sb: Client = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
-        print("🟢 Supabase connected successfully!", flush=True)
-    except Exception as e:
-        print(f"🔴 Supabase init failed: {e}", flush=True)
-    
-    @app.route('/health')
-    def h(): return jsonify({"status":"ok"}), 200
-    @app.route('/')
-    def home(): return "<h1>✅ Deboo Live</h1>"
-    
-    # Minimal placeholder poller (won't block, just proves thread starts)
-    if os.environ.get("TELEGRAM_BOT_TOKEN"):
-        def poll_placeholder():
-            print("🟢 Telegram thread started (placeholder)", flush=True)
-            while True: time.sleep(30)
-        threading.Thread(target=poll_placeholder, daemon=True).start()
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+    # 🔄 ACTUAL POLLER (with explicit logging)
+    def run_poller():
+        token = os.environ["TELEGRAM_BOT_TOKEN"]
+        print(f"🚀 Poller starting for {token[:10]}...", flush=True)
+        offset = 0
+        while True:
+            try:
+                url = f"https://api.telegram.org/bot{token}/getUpdates"
+                r = requests.get(url, params={"offset": offset, "timeout": 30}, timeout=35)
+                data = r.json()
+                
+                if data.get("ok"):
+                    updates = data.get("result", [])
+                    if updates:
+                        print(f"📨 Got {len(updates)} update(s)", flush=True)
+                    for u in updates:
+                        offset = u["update_id"] + 1
+                        if "message" in u and "text" in u["message"]:
+                            cid = u["message"]["chat"]["id"]
+                            txt = u["message"]["text"]
+                            print(f"💬 Received: '{txt}' from chat {cid}", flush=True)
+                            
+                            # Simple reply
+                            reply = f"✅ Deboo received: {txt}"
+                            requests.post(
+                                f"https://api.telegram.org/bot{token}/sendMessage",
+                                json={"chat_id": cid, "text": reply},
+                                timeout=5
+                            )
+                time.sleep(1)  # Prevent tight loop
+            except Exception as e:
+                print(f"❌ Poll error: {e}", flush=True)
+                time.sleep(5)
+
+    # Launch poller thread
+    if os.environ.get("TELEGRAM_BOT_TOKEN"):
+        t = threading.Thread(target=run_poller, daemon=True)
+        t.start()
+        print("✅ Polling thread launched", flush=True)
+    else:
+        print("⚠️ No Telegram token found", flush=True)
