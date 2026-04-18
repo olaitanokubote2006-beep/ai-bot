@@ -1,18 +1,19 @@
 from flask import Flask, jsonify
-import os, requests, threading, time
+import os, requests, threading, time, json
+from openai import OpenAI
 
 app = Flask(__name__)
 
 # ✅ ROUTES
 @app.route('/test')
-def t(): return jsonify({"ok": True, "version": "multilingual-v1"}), 200
+def t(): return jsonify({"ok": True, "version": "agent-v1"}), 200
 @app.route('/health')
 def h(): return jsonify({"status": "ok"}), 200
 @app.route('/')
-def home(): return "<h1>✅ Deboo Live (Multilingual)</h1>"
+def home(): return "<h1>✅ Deboo AI Agent Live</h1>"
 
 # ✅ APP LOGIC
-REQUIRED = ["SUPABASE_URL", "SUPABASE_KEY", "TELEGRAM_BOT_TOKEN"]
+REQUIRED = ["SUPABASE_URL", "SUPABASE_KEY", "TELEGRAM_BOT_TOKEN", "GROQ_API_KEY"]
 if all(os.environ.get(v) for v in REQUIRED):
     try:
         from supabase import create_client
@@ -22,57 +23,120 @@ if all(os.environ.get(v) for v in REQUIRED):
         print(f"🔴 Supabase error: {e}", flush=True)
         sb = None
 
-    # 🌍 MULTILINGUAL ENGINE (Rule-based, zero API cost)
-    def detect_lang(text):
-        t = text.lower().strip()
-        keys = {
-            'pidgin': ['wetin', 'abi', 'na', 'dey', 'how far', 'oya', 'guy', 'make i', 'no dey', 'abi you'],
-            'yoruba': ['bawo', 'e se', 'daada', 'omo', 'sugbon', 'ko si', 'wa', 'ni', 'ti wa'],
-            'igbo': ['kedu', 'daalu', 'nnoo', 'karia', 'ma', 'ga', 'na-eme', 'anyi', 'ka m'],
-            'hausa': ['sannu', 'yaya', 'kwana', 'ina', 'ka', 'ki', 'ba', 'da', 'muna']
-        }
-        scores = {lang: sum(1 for k in kw if k in t) for lang, kw in keys.items()}
-        best = max(scores, key=scores.get)
-        return best if scores[best] > 0 else 'english'
+    # 🤖 AI Client (Groq via OpenAI-compatible SDK)
+    client = OpenAI(api_key=os.environ["GROQ_API_KEY"], base_url="https://api.groq.com/openai/v1")
 
-    MSGS = {
-        'greeting': {
-            'english': "👋 Hello! I'm Deboo 🤖\n\nTry: *show products*, *pay*, or *track order*",
-            'pidgin': "👋 How far my pesin! I be Deboo 🤖\n\nTry: *show products*, *pay*, or *track order*",
-            'yoruba': "👋 Bawo! Oruko mi ni Deboo 🤖\n\nTry: *show products*, *pay*, or *track order*",
-            'igbo': "👋 Kedụ! Abụ m Deboo 🤖\n\nTry: *show products*, *pay*, or *track order*",
-            'hausa': "👋 Sannu! Ni ne Deboo 🤖\n\nTry: *show products*, *pay*, or *track order*"
+    # 🧠 Conversation Memory (per user, in-memory)
+    user_histories = {}
+
+    # 🛠️ Tool Definitions for LLM
+    TOOLS = [
+        {
+            "type": "function",
+            "function": {
+                "name": "list_products",
+                "description": "List all available products from the database",
+                "parameters": {"type": "object", "properties": {}}
+            }
         },
-        'prod_head': {
-            'english': "🛍️ *Available Products:*\n\n",
-            'pidgin': "🛍️ *Wetin we dey sell:*\n\n",
-            'yoruba': "🛍️ *Ohun ti a n ta ni:*\n\n",
-            'igbo': "🛍️ *Ihe anyị na-ere:*\n\n",
-            'hausa': "🛍️ *Abin da muke sayarwa:*\n\n"
-        },
-        'prod_foot': {
-            'english': "_Reply with a number to order!_",
-            'pidgin': "_Reply with number make you order!_",
-            'yoruba': "_Fi nọmba ranṣẹ lati ra!_",
-            'igbo': "_Za nọmba ka ị zụta!_",
-            'hausa': "_Amsa da lamba don sayayya!_"
-        },
-        'no_prod': {
-            'english': "📦 No products yet. Check back later!",
-            'pidgin': "📦 No product dey for now. Abeg wait!",
-            'yoruba': "📦 Ko si oja kan lọwọlọwọ.",
-            'igbo': "📦 Ihe ọ bụla adịghị ugbu a.",
-            'hausa': "📦 Babu abu a yanzu."
+        {
+            "type": "function",
+            "function": {
+                "name": "create_order",
+                "description": "Save a new order after user confirms product & address",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "product_name": {"type": "string"},
+                        "price": {"type": "number"},
+                        "address": {"type": "string"},
+                        "customer_telegram_id": {"type": "string"}
+                    },
+                    "required": ["product_name", "price", "address", "customer_telegram_id"]
+                }
+            }
         }
-    }
+    ]
+
+    # 🌍 SYSTEM PROMPT
+    SYSTEM_PROMPT = """You are Deboo, a friendly AI shopping assistant for Nigeria. 
+- Always reply in the user's language (English, Pidgin, Yoruba, Igbo, or Hausa)
+- Be concise, culturally aware, and helpful
+- Use markdown formatting for lists, prices, and emphasis
+- When user asks for products: call list_products() first, then format the response
+- When user confirms an order: call create_order() with exact details
+- Never make up prices or products. Only use tool responses.
+- If unsure, ask clarifying questions politely."""
 
     def send(cid, txt, token, parse="Markdown"):
-        requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": cid, "text": txt, "parse_mode": parse}, timeout=5)
+        try: requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": cid, "text": txt, "parse_mode": parse}, timeout=5)
+        except: pass
+
+    def run_agent(cid, txt, token):
+        if cid not in user_histories:
+            user_histories[cid] = [{"role": "system", "content": SYSTEM_PROMPT}]
+        
+        user_histories[cid].append({"role": "user", "content": txt})
+        
+        # Keep context window manageable
+        if len(user_histories[cid]) > 15:
+            user_histories[cid] = [user_histories[cid][0]] + user_histories[cid][-12:]
+
+        try:
+            res = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=user_histories[cid],
+                tools=TOOLS,
+                temperature=0.4
+            )
+            msg = res.choices[0].message
+            
+            if msg.tool_calls:
+                user_histories[cid].append(msg)
+                for tool in msg.tool_calls:
+                    if tool.function.name == "list_products":
+                        try:
+                            data = sb.table("products").select("*").execute().data
+                            content = json.dumps(data, default=str)
+                        except Exception as e:
+                            content = f"Error fetching products: {str(e)}"
+                        user_histories[cid].append({"role": "tool", "tool_call_id": tool.id, "content": content})
+                    
+                    elif tool.function.name == "create_order":
+                        args = json.loads(tool.function.arguments)
+                        try:
+                            sb.table("orders").insert({
+                                "product": args["product_name"],
+                                "price": args["price"],
+                                "address": args["address"],
+                                "telegram_id": args["customer_telegram_id"],
+                                "status": "pending"
+                            }).execute()
+                            content = json.dumps({"success": True, "message": "Order saved successfully"})
+                        except Exception as e:
+                            content = json.dumps({"success": False, "error": str(e)})
+                        user_histories[cid].append({"role": "tool", "tool_call_id": tool.id, "content": content})
+
+                # Second LLM call to process tool results
+                res2 = client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=user_histories[cid],
+                    temperature=0.4
+                )
+                final_msg = res2.choices[0].message.content
+                user_histories[cid].append({"role": "assistant", "content": final_msg})
+                return final_msg
+            else:
+                user_histories[cid].append(msg)
+                return msg.content
+        except Exception as e:
+            print(f"🔴 Agent error: {e}", flush=True)
+            return "⚠️ I'm having a moment. Please try again in a sec."
 
     def poll():
         token = os.environ["TELEGRAM_BOT_TOKEN"]
         off = 0
-        print("🌍 Multilingual poller started", flush=True)
+        print("🤖 AI Agent poller started", flush=True)
         while True:
             try:
                 r = requests.get(f"https://api.telegram.org/bot{token}/getUpdates", params={"offset": off, "timeout": 30}, timeout=35)
@@ -83,34 +147,20 @@ if all(os.environ.get(v) for v in REQUIRED):
                         if "message" in u and "text" in u["message"]:
                             cid = u["message"]["chat"]["id"]
                             txt = u["message"]["text"].strip()
-                            lang = detect_lang(txt)
-                            t_lower = txt.lower()
-
-                            if t_lower in ['show products', 'products', 'menu', 'catalog', 'wetin you get', 'bawo ni', 'kedu ihe', 'menene']:
-                                if sb:
-                                    try:
-                                        res = sb.table("products").select("*").execute()
-                                        items = res.data
-                                        if items:
-                                            msg = MSGS['prod_head'][lang]
-                                            for i, p in enumerate(items, 1):
-                                                price = f"₦{p['price']:,.0f}" if p.get('price') else "₦0"
-                                                msg += f"{i}️⃣ *{p['name']}* - {price}\n"
-                                                if p.get('description'): msg += f"   _{p['description']}_\n"
-                                                msg += "\n"
-                                            msg += MSGS['prod_foot'][lang]
-                                        else:
-                                            msg = MSGS['no_prod'][lang]
-                                    except Exception as e:
-                                        msg = f"⚠️ DB Error: {str(e)[:50]}"
-                                else:
-                                    msg = "🔴 Database not connected"
-                                send(cid, msg, token)
-                            else:
-                                send(cid, MSGS['greeting'][lang], token)
+                            print(f"💬 User {cid}: {txt}", flush=True)
+                            reply = run_agent(cid, txt, token)
+                            send(cid, reply, token)
                 time.sleep(1)
             except Exception as e:
                 print(f"❌ Poll error: {e}", flush=True)
                 time.sleep(5)
+
+    # ✅ Create orders table if it doesn't exist
+    try:
+        sb.table("orders").select("id").limit(1).execute()
+    except:
+        try:
+            sb.rpc("create_orders_table").execute() # Fallback or use SQL editor manually
+        except: pass
 
     threading.Thread(target=poll, daemon=True).start()
