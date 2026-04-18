@@ -1,19 +1,56 @@
-from flask import Flask, jsonify
-import os, requests, threading, time, json
+from flask import Flask, jsonify, request
+import os, requests, threading, time, json, hmac, hashlib
 from openai import OpenAI
 
 app = Flask(__name__)
 
-# ✅ ROUTES
+# ✅ ROUTES (registered first)
 @app.route('/test')
-def t(): return jsonify({"ok": True, "version": "agent-v1"}), 200
+def t(): return jsonify({"ok": True, "version": "paystack-v1"}), 200
 @app.route('/health')
 def h(): return jsonify({"status": "ok"}), 200
 @app.route('/')
-def home(): return "<h1>✅ Deboo AI Agent Live</h1>"
+def home(): return "<h1>✅ Deboo AI + Paystack Live</h1>"
+
+# 💳 PAYSTACK WEBHOOK (must be top-level)
+@app.route('/webhook/paystack', methods=['POST'])
+def paystack_webhook():
+    secret = os.environ.get("PAYSTACK_SECRET_KEY", "")
+    signature = request.headers.get("x-paystack-signature", "")
+    payload = request.get_data()
+    
+    # Verify signature
+    expected = hmac.new(secret.encode(), payload, hashlib.sha512).hexdigest()
+    if signature != expected:
+        return jsonify({"error": "invalid signature"}), 401
+    
+    event = json.loads(payload)
+    if event.get("event") == "charge.success":
+        data = event.get("data", {})
+        ref = data.get("reference", "")
+        meta = data.get("metadata", {})
+        telegram_id = meta.get("telegram_id")
+        order_id = meta.get("order_id")
+        
+        if order_id and sb:
+            try:
+                sb.table("orders").update({"status": "paid", "payment_ref": ref}).eq("id", order_id).execute()
+                if telegram_id:
+                    lang = user_histories.get(telegram_id, [{}])[0].get("lang", "english")
+                    receipt = {
+                        "english": f"✅ *Payment Successful!*\nRef: `{ref}`\nStatus: PAID\nWe'll prepare your order now. 📦",
+                        "pidgin": f"✅ *Payment don land!*\nRef: `{ref}`\nStatus: PAID\nWe go prepare your order sharp-sharp. 📦",
+                        "yoruba": f"✅ *Isanwo ti ṣe!*\nRef: `{ref}`\nStatus: PAID\nA n ṣetọju aṣẹ rẹ bayi. 📦",
+                        "igbo": f"✅ *Ịkwụ ụgwọ gasịrị!*\nRef: `{ref}`\nStatus: PAID\nAnyị na-akwadebe iwu gị ugbu a. 📦",
+                        "hausa": f"✅ *An yi biyan kuɗi!*\nRef: `{ref}`\nStatus: PAID\nMuna shirya odar ku yanzu. 📦"
+                    }
+                    send(telegram_id, receipt.get(lang, receipt["english"]), os.environ["TELEGRAM_BOT_TOKEN"])
+            except Exception as e:
+                print(f"🔴 Webhook DB error: {e}", flush=True)
+    return jsonify({"ok": True}), 200
 
 # ✅ APP LOGIC
-REQUIRED = ["SUPABASE_URL", "SUPABASE_KEY", "TELEGRAM_BOT_TOKEN", "GROQ_API_KEY"]
+REQUIRED = ["SUPABASE_URL", "SUPABASE_KEY", "TELEGRAM_BOT_TOKEN", "GROQ_API_KEY", "PAYSTACK_SECRET_KEY"]
 if all(os.environ.get(v) for v in REQUIRED):
     try:
         from supabase import create_client
@@ -23,50 +60,28 @@ if all(os.environ.get(v) for v in REQUIRED):
         print(f"🔴 Supabase error: {e}", flush=True)
         sb = None
 
-    # 🤖 AI Client (Groq via OpenAI-compatible SDK)
     client = OpenAI(api_key=os.environ["GROQ_API_KEY"], base_url="https://api.groq.com/openai/v1")
-
-    # 🧠 Conversation Memory (per user, in-memory)
     user_histories = {}
+    BASE_URL = os.environ.get("BASE_URL", "https://your-app.up.railway.app")
 
-    # 🛠️ Tool Definitions for LLM
+    # 🛠️ TOOLS
     TOOLS = [
-        {
-            "type": "function",
-            "function": {
-                "name": "list_products",
-                "description": "List all available products from the database",
-                "parameters": {"type": "object", "properties": {}}
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "create_order",
-                "description": "Save a new order after user confirms product & address",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "product_name": {"type": "string"},
-                        "price": {"type": "number"},
-                        "address": {"type": "string"},
-                        "customer_telegram_id": {"type": "string"}
-                    },
-                    "required": ["product_name", "price", "address", "customer_telegram_id"]
-                }
-            }
-        }
+        {"type":"function","function":{"name":"list_products","description":"List all available products","parameters":{"type":"object","properties":{}}}},
+        {"type":"function","function":{"name":"create_payment","description":"Generate Paystack link for confirmed order. Requires product_name, price, customer_email, telegram_id","parameters":{"type":"object","properties":{"product_name":{"type":"string"},"price":{"type":"number"},"customer_email":{"type":"string"},"telegram_id":{"type":"string"}},"required":["product_name","price","customer_email","telegram_id"]}}},
+        {"type":"function","function":{"name":"save_order","description":"Save pending order before payment","parameters":{"type":"object","properties":{"product_name":{"type":"string"},"price":{"type":"number"},"address":{"type":"string"},"customer_email":{"type":"string"},"telegram_id":{"type":"string"}},"required":["product_name","price","address","customer_email","telegram_id"]}}}
     ]
 
-    # 🌍 SYSTEM PROMPT
     SYSTEM_PROMPT = """You are Deboo, a friendly AI shopping assistant for Nigeria. 
 - Always reply in the user's language (English, Pidgin, Yoruba, Igbo, or Hausa)
 - Be concise, culturally aware, and helpful
-- Use markdown formatting for lists, prices, and emphasis
-- When user asks for products: call list_products() first, then format the response
-- When user confirms an order: call create_order() with exact details
-- Never make up prices or products. Only use tool responses.
-- If unsure, ask clarifying questions politely."""
+- Use markdown formatting
+- When user asks for products: call list_products()
+- When user confirms order with email & address: 
+  1. Call save_order() first to store pending order
+  2. Then call create_payment() with the order details
+  3. Send the payment link to the user
+- If email is missing, politely ask for it before proceeding
+- Never make up prices or products. Only use tool responses."""
 
     def send(cid, txt, token, parse="Markdown"):
         try: requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": cid, "text": txt, "parse_mode": parse}, timeout=5)
@@ -74,58 +89,67 @@ if all(os.environ.get(v) for v in REQUIRED):
 
     def run_agent(cid, txt, token):
         if cid not in user_histories:
-            user_histories[cid] = [{"role": "system", "content": SYSTEM_PROMPT}]
+            user_histories[cid] = [{"role": "system", "content": SYSTEM_PROMPT, "lang": "english"}]
         
+        # Detect language for context
+        t_lower = txt.lower()
+        lang = "english"
+        if any(w in t_lower for w in ['wetin','abi','dey','oya','guy']): lang = "pidgin"
+        elif any(w in t_lower for w in ['bawo','omo','sugbon','ko si']): lang = "yoruba"
+        elif any(w in t_lower for w in ['kedu','daalu','nnoo','anyi']): lang = "igbo"
+        elif any(w in t_lower for w in ['sannu','yaya','kwana','muna']): lang = "hausa"
+        
+        user_histories[cid][-1]["lang"] = lang
         user_histories[cid].append({"role": "user", "content": txt})
-        
-        # Keep context window manageable
-        if len(user_histories[cid]) > 15:
-            user_histories[cid] = [user_histories[cid][0]] + user_histories[cid][-12:]
+        if len(user_histories[cid]) > 20:
+            user_histories[cid] = [user_histories[cid][0]] + user_histories[cid][-15:]
 
         try:
-            res = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=user_histories[cid],
-                tools=TOOLS,
-                temperature=0.4
-            )
+            res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=user_histories[cid], tools=TOOLS, temperature=0.3)
             msg = res.choices[0].message
             
             if msg.tool_calls:
                 user_histories[cid].append(msg)
                 for tool in msg.tool_calls:
-                    if tool.function.name == "list_products":
-                        try:
-                            data = sb.table("products").select("*").execute().data
-                            content = json.dumps(data, default=str)
-                        except Exception as e:
-                            content = f"Error fetching products: {str(e)}"
-                        user_histories[cid].append({"role": "tool", "tool_call_id": tool.id, "content": content})
+                    args = json.loads(tool.function.arguments)
+                    args["telegram_id"] = str(cid)
                     
-                    elif tool.function.name == "create_order":
-                        args = json.loads(tool.function.arguments)
+                    if tool.function.name == "list_products":
+                        try: data = sb.table("products").select("*").execute().data
+                        except Exception as e: data = []
+                        user_histories[cid].append({"role":"tool","tool_call_id":tool.id,"content":json.dumps(data, default=str)})
+                    
+                    elif tool.function.name == "save_order":
                         try:
-                            sb.table("orders").insert({
-                                "product": args["product_name"],
-                                "price": args["price"],
-                                "address": args["address"],
-                                "telegram_id": args["customer_telegram_id"],
-                                "status": "pending"
+                            res = sb.table("orders").insert({
+                                "product": args["product_name"], "price": args["price"],
+                                "address": args["address"], "telegram_id": str(cid),
+                                "customer_email": args["customer_email"], "status": "pending"
                             }).execute()
-                            content = json.dumps({"success": True, "message": "Order saved successfully"})
+                            user_histories[cid].append({"role":"tool","tool_call_id":tool.id,"content":json.dumps({"order_id": res.data[0]["id"]})})
                         except Exception as e:
-                            content = json.dumps({"success": False, "error": str(e)})
-                        user_histories[cid].append({"role": "tool", "tool_call_id": tool.id, "content": content})
+                            user_histories[cid].append({"role":"tool","tool_call_id":tool.id,"content":json.dumps({"error": str(e)})})
+                    
+                    elif tool.function.name == "create_payment":
+                        try:
+                            paystack_url = "https://api.paystack.co/transaction/initialize"
+                            headers = {"Authorization": f"Bearer {os.environ['PAYSTACK_SECRET_KEY']}", "Content-Type": "application/json"}
+                            payload = {
+                                "email": args["customer_email"],
+                                "amount": int(args["price"] * 100),
+                                "metadata": {"telegram_id": str(cid), "order_id": args.get("order_id")}
+                            }
+                            r = requests.post(paystack_url, json=payload, headers=headers, timeout=10)
+                            pay_data = r.json()
+                            link = pay_data["data"]["authorization_url"] if pay_data.get("status") else "error"
+                            user_histories[cid].append({"role":"tool","tool_call_id":tool.id,"content":json.dumps({"link": link})})
+                        except Exception as e:
+                            user_histories[cid].append({"role":"tool","tool_call_id":tool.id,"content":json.dumps({"error": str(e)})})
 
-                # Second LLM call to process tool results
-                res2 = client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
-                    messages=user_histories[cid],
-                    temperature=0.4
-                )
-                final_msg = res2.choices[0].message.content
-                user_histories[cid].append({"role": "assistant", "content": final_msg})
-                return final_msg
+                res2 = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=user_histories[cid], temperature=0.3)
+                final = res2.choices[0].message.content
+                user_histories[cid].append({"role":"assistant","content":final})
+                return final
             else:
                 user_histories[cid].append(msg)
                 return msg.content
@@ -136,7 +160,7 @@ if all(os.environ.get(v) for v in REQUIRED):
     def poll():
         token = os.environ["TELEGRAM_BOT_TOKEN"]
         off = 0
-        print("🤖 AI Agent poller started", flush=True)
+        print("🤖 AI Agent + Paystack poller started", flush=True)
         while True:
             try:
                 r = requests.get(f"https://api.telegram.org/bot{token}/getUpdates", params={"offset": off, "timeout": 30}, timeout=35)
@@ -154,13 +178,5 @@ if all(os.environ.get(v) for v in REQUIRED):
             except Exception as e:
                 print(f"❌ Poll error: {e}", flush=True)
                 time.sleep(5)
-
-    # ✅ Create orders table if it doesn't exist
-    try:
-        sb.table("orders").select("id").limit(1).execute()
-    except:
-        try:
-            sb.rpc("create_orders_table").execute() # Fallback or use SQL editor manually
-        except: pass
 
     threading.Thread(target=poll, daemon=True).start()
