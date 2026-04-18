@@ -4,36 +4,14 @@ from openai import OpenAI
 
 app = Flask(__name__)
 
-# ✅ ROUTES AT TOP LEVEL (always register, even if env vars fail)
+# ✅ ROUTES
 @app.route('/test')
-def t(): return jsonify({"ok": True, "version": "paystack-v2"}), 200
-
-@app.route('/test-paystack')
-def test_paystack():
-    key = os.environ.get("PAYSTACK_SECRET_KEY", "MISSING")
-    if key == "MISSING": return jsonify({"error": "PAYSTACK_SECRET_KEY missing in Railway"}), 400
-    try:
-        headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-        r = requests.post("https://api.paystack.co/transaction/initialize", json={"email": "test@deboo.ng", "amount": 10000}, headers=headers, timeout=10)
-        return r.json()
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/check-env')
-def check_env():
-    return jsonify({
-        "PAYSTACK_KEY": "✓ set" if os.environ.get("PAYSTACK_SECRET_KEY") else "✗ missing",
-        "GROQ_KEY": "✓ set" if os.environ.get("GROQ_API_KEY") else "✗ missing",
-        "SUPABASE_URL": "✓ set" if os.environ.get("SUPABASE_URL") else "✗ missing"
-    })
-
+def t(): return jsonify({"ok": True, "version": "paystack-clean"}), 200
 @app.route('/health')
 def h(): return jsonify({"status": "ok"}), 200
-
 @app.route('/')
 def home(): return "<h1>✅ Deboo AI + Paystack Live</h1>"
 
-# 💳 WEBHOOK
 @app.route('/webhook/paystack', methods=['POST'])
 def paystack_webhook():
     secret = os.environ.get("PAYSTACK_SECRET_KEY", "")
@@ -90,12 +68,17 @@ if all(os.environ.get(v) for v in REQUIRED):
 - When asked for products: call list_products()
 - When user confirms purchase: ask for EMAIL & DELIVERY ADDRESS
 - Once you have all 4 fields: call process_checkout() EXACTLY ONCE
-- If Paystack returns a link, send it clearly: "🔗 Click here to pay: [link]"
+- CRITICAL: When the tool returns a payment link, send it EXACTLY as: 
+  🔗 Pay securely: https://checkout.paystack.com/...
+  DO NOT wrap the URL in asterisks, underscores, or markdown. DO NOT modify a single character of the URL.
 - Never make up prices."""
 
-    def send(cid, txt, token, parse="Markdown"):
-        try: requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": cid, "text": txt, "parse_mode": parse}, timeout=5)
-        except: pass
+    def send(cid, txt, token, parse="HTML"):
+        # Use HTML mode to safely render links
+        try: 
+            requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": cid, "text": txt, "parse_mode": parse}, timeout=5)
+        except Exception as e:
+            print(f"📤 Send error: {e}", flush=True)
 
     def run_agent(cid, txt, token):
         if cid not in user_histories: user_histories[cid] = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -121,8 +104,11 @@ if all(os.environ.get(v) for v in REQUIRED):
                             payload = {"email": args["customer_email"], "amount": int(float(args["price"]) * 100), "metadata": {"telegram_id": str(cid), "order_id": order_id}}
                             r = requests.post("https://api.paystack.co/transaction/initialize", json=payload, headers=headers, timeout=10)
                             pay_res = r.json()
+                            print(f"💳 RAW PAYSTACK RESPONSE: {json.dumps(pay_res)}", flush=True) # 🔍 DEBUG LOG
+                            
                             if pay_res.get("status") and pay_res["data"].get("authorization_url"):
-                                user_histories[cid].append({"role":"tool","tool_call_id":tool.id,"content":json.dumps({"success": True, "link": pay_res["data"]["authorization_url"], "order_id": order_id})})
+                                url = pay_res["data"]["authorization_url"]
+                                user_histories[cid].append({"role":"tool","tool_call_id":tool.id,"content":json.dumps({"success": True, "link": url, "order_id": order_id})})
                             else:
                                 user_histories[cid].append({"role":"tool","tool_call_id":tool.id,"content":json.dumps({"success": False, "error": pay_res.get("message", "Paystack error")})})
                         except Exception as e:
