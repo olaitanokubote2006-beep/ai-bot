@@ -115,9 +115,20 @@ RULES:
                             headers = {"Authorization": f"Bearer {os.environ['PAYSTACK_SECRET_KEY']}", "Content-Type": "application/json"}
                             payload = {"email": args["customer_email"], "amount": int(float(args["price"]) * 100), "metadata": {"telegram_id": str(cid), "order_id": order_id}}
                             
-                            print("💳 Calling Paystack...", flush=True)
+                                                        print("💳 Calling Paystack...", flush=True)
                             r = requests.post("https://api.paystack.co/transaction/initialize", json=payload, headers=headers, timeout=15)
-                            print(f"💳 STATUS: {r.status_code} | RAW: {r.text[:300]}", flush=True) # 🔍 DEBUG LOG
+                            print(f"💳 STATUS: {r.status_code} | HEADERS: {dict(r.headers)} | RAW: {r.text[:500]}", flush=True)
+                            
+                            # 🔒 Only parse JSON if status is success-ish AND body is non-empty
+                            if r.status_code in [200, 201] and r.text.strip():
+                                try: pay_res = r.json()
+                                except: pay_res = {"status": False, "message": f"Invalid JSON from Paystack: {r.text[:100]}"}
+                            else:
+                                # Handle empty/error responses gracefully
+                                pay_res = {
+                                    "status": False, 
+                                    "message": f"Paystack error: HTTP {r.status_code} - {r.text[:200] if r.text.strip() else 'Empty response'}"
+                                }
                             
                             # 🔒 Safe JSON parsing
                             try: pay_res = r.json()
